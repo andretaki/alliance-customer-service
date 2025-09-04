@@ -1,0 +1,50 @@
+{
+  "name": "alliance-customer-service",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3002",
+    "build": "next build",
+    "start": "next start --port 3002",
+    "lint": "next lint",
+    "db:migrate": "drizzle-kit migrate",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio",
+    "db:introspect": "drizzle-kit introspect"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@types/pg": "^8.15.5",
+    "@upstash/ratelimit": "^2.0.6",
+    "@upstash/redis": "^1.35.3",
+    "axios": "^1.11.0",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.1",
+    "drizzle-kit": "^0.31.4",
+    "drizzle-orm": "^0.44.4",
+    "mailgun.js": "^12.0.3",
+    "next": "15.4.6",
+    "openai": "^4.78.1",
+    "pg": "^8.16.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@faker-js/faker": "^9.9.0",
+    "@playwright/test": "^1.54.2",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv-cli": "^10.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.6",
+    "express": "^5.1.0",
+    "open": "^10.2.0",
+    "playwright": "^1.54.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

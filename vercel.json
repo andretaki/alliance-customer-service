@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/jobs/sla-check",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/jobs/weekly-report",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/jobs/customer-sync",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/jobs/quickbooks-refresh",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}

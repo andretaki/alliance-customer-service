@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-08-18T14:58:16.035Z",
+  "statistics": {
+    "shopifyTotal": 0,
+    "quickbooksTotal": 0,
+    "commonCustomers": 0,
+    "shopifyOnly": 0,
+    "quickbooksOnly": 0,
+    "syncedToShopify": 0,
+    "syncedToQuickbooks": 0,
+    "errors": []
+  },
+  "customers": {
+    "synced": [],
+    "shopifyOnly": [],
+    "quickbooksOnly": []
+  }
+}
