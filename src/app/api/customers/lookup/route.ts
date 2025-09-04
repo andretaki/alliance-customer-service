@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { customers } from '@/db';
-import { eq, or, and, ne } from 'drizzle-orm';
+import { eq, or, and, ne, ilike } from 'drizzle-orm';
 import { ShopifyIntegrationService } from '@/services/integrations/ShopifyIntegrationService';
 import { QuickbooksIntegrationService } from '@/services/integrations/QuickbooksIntegrationService';
 
@@ -10,9 +10,10 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const email = searchParams.get('email');
+    const normalizedEmail = email?.trim().toLowerCase() || null;
     const phone = searchParams.get('phone');
 
-    if (!email && !phone) {
+    if (!normalizedEmail && !phone) {
       return NextResponse.json(
         { 
           success: false, 
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
 
     // 1. Check local database first
     const conditions = [];
-    if (email) conditions.push(eq(customers.email, email));
+    if (normalizedEmail) conditions.push(ilike(customers.email, normalizedEmail));
     if (phone) conditions.push(eq(customers.phone, phone));
     
     const localCustomers = await db
@@ -62,9 +63,9 @@ export async function GET(request: NextRequest) {
 
     // 2. Search Shopify for customer data
     const shopifyService = new ShopifyIntegrationService();
-    if (email) {
+    if (normalizedEmail) {
       try {
-        const shopifyResult = await shopifyService.findCustomerByEmail(email);
+        const shopifyResult = await shopifyService.findCustomerByEmail(normalizedEmail);
         if (shopifyResult.success && shopifyResult.response) {
           results.shopifyCustomer = shopifyResult.response;
           
@@ -113,9 +114,9 @@ export async function GET(request: NextRequest) {
 
     // 3. Search QuickBooks for customer data
     const quickbooksService = new QuickbooksIntegrationService();
-    if (email) {
+    if (normalizedEmail) {
       try {
-        const quickbooksResult = await quickbooksService.findCustomerByEmail(email);
+        const quickbooksResult = await quickbooksService.findCustomerByEmail(normalizedEmail);
         if (quickbooksResult.success && quickbooksResult.response) {
           results.quickbooksCustomer = quickbooksResult.response;
           
@@ -173,7 +174,7 @@ export async function GET(request: NextRequest) {
       const newCustomer = await db
         .insert(customers)
         .values({
-          email: email!,
+          email: normalizedEmail!,
           phone: phone || null,
           firstName: results.enrichedData.name?.split(' ')[0] || null,
           lastName: results.enrichedData.name?.split(' ').slice(1).join(' ') || null,

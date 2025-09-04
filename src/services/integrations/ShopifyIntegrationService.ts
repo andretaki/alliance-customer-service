@@ -56,10 +56,11 @@ export class ShopifyIntegrationService {
         };
       }
 
-      console.log(`[ShopifyIntegration] Creating customer: ${data.email}`);
+      const email = data.email?.trim().toLowerCase();
+      console.log(`[ShopifyIntegration] Creating customer: ${email || data.phone}`);
 
       // First check if customer already exists
-      const existingCustomer = await this.findCustomerByEmail(data.email);
+      const existingCustomer = email ? await this.findCustomerByEmail(email) : { success: false } as any;
       if (existingCustomer.success && existingCustomer.customerId) {
         console.log(`[ShopifyIntegration] Customer already exists: ${data.email} (ID: ${existingCustomer.customerId})`);
         return {
@@ -71,7 +72,7 @@ export class ShopifyIntegrationService {
       }
 
       // Prepare customer data for Shopify
-      const customerData = this.prepareShopifyCustomerData(data);
+      const customerData = this.prepareShopifyCustomerData({ ...data, email });
 
       // Create customer in Shopify
       const response = await this.shopifyApiCall('POST', '/customers.json', {
@@ -163,8 +164,9 @@ export class ShopifyIntegrationService {
         };
       }
 
+      const e = email.trim().toLowerCase();
       const response = await this.shopifyApiCall('GET', '/customers/search.json', undefined, {
-        query: `email:${email}`
+        query: `email:${e}`
       });
 
       if (response.data?.customers && response.data.customers.length > 0) {
@@ -294,7 +296,7 @@ export class ShopifyIntegrationService {
       const searchPromises: Promise<ShopifyIntegrationResult>[] = [];
       
       if (email) {
-        searchPromises.push(this.findCustomerByEmail(email));
+        searchPromises.push(this.findCustomerByEmail(email.trim().toLowerCase()));
       }
       
       if (phone) {

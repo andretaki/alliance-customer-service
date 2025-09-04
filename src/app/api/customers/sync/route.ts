@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { customers, customerAddresses } from '@/db';
 import { customerSyncLog } from '@/db';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, ilike } from 'drizzle-orm';
 import { ShopifyIntegrationService } from '@/services/integrations/ShopifyIntegrationService';
 
 interface CustomerSyncRequest {
@@ -26,8 +26,9 @@ interface CustomerSyncRequest {
 export async function POST(request: NextRequest) {
   try {
     const body: CustomerSyncRequest = await request.json();
+    const normalizedEmail = body.email?.trim().toLowerCase();
     
-    if (!body.email && !body.phone) {
+    if (!normalizedEmail && !body.phone) {
       return NextResponse.json(
         { 
           success: false, 
@@ -68,7 +69,9 @@ export async function POST(request: NextRequest) {
       .from(customers)
       .where(
         and(
-          eq(customers.email, body.email),
+          normalizedEmail
+            ? ilike(customers.email, normalizedEmail)
+            : eq(customers.phone, body.phone || ''),
           ne(customers.status, 'archived')
         )
       )
@@ -88,12 +91,12 @@ export async function POST(request: NextRequest) {
     // 2. Search/Create in Shopify (email OR phone)
     const shopifyService = new ShopifyIntegrationService();
     try {
-      let shopifyResult = await shopifyService.findCustomerByEmailOrPhone(body.email, body.phone);
+      let shopifyResult = await shopifyService.findCustomerByEmailOrPhone(normalizedEmail, body.phone);
       
       if (!shopifyResult.success && createIfNotFound) {
         // Create in Shopify
         shopifyResult = await shopifyService.createCustomer({
-          email: body.email,
+          email: normalizedEmail,
           firstName: body.name?.split(' ')[0],
           lastName: body.name?.split(' ').slice(1).join(' '),
           phone: body.phone,
@@ -209,7 +212,7 @@ export async function POST(request: NextRequest) {
       const newCustomer = await db
         .insert(customers)
         .values({
-          email: body.email,
+          email: normalizedEmail || body.email!,
           firstName: syncResult.enrichedData.name?.split(' ')[0] || body.name?.split(' ')[0] || null,
           lastName: syncResult.enrichedData.name?.split(' ').slice(1).join(' ') || body.name?.split(' ').slice(1).join(' ') || null,
           phone: syncResult.enrichedData.phone || body.phone || null,

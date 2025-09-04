@@ -1,5 +1,8 @@
-import { pgTable, serial, integer, varchar, text, timestamp, bigint, boolean, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, serial, integer, varchar, text, timestamp, bigint, boolean, pgEnum, jsonb, pgSchema } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+// Define customer_service schema
+export const customerServiceSchema = pgSchema('customer_service');
 
 // Enums
 export const customerStatusEnum = pgEnum('customer_status', ['active', 'inactive', 'archived']);
@@ -7,7 +10,7 @@ export const addressTypeEnum = pgEnum('address_type', ['shipping', 'billing', 'b
 export const integrationStatusEnum = pgEnum('integration_status', ['pending', 'synced', 'failed', 'disabled']);
 
 // Customers table - core customer data
-export const customers = pgTable('customers', {
+export const customers = customerServiceSchema.table('customers', {
   id: serial('id').primaryKey(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   firstName: varchar('first_name', { length: 255 }),
@@ -28,6 +31,7 @@ export const customers = pgTable('customers', {
   source: varchar('source', { length: 50 }), // 'ticket', 'email', 'phone', 'web', 'manual'
   notes: text('notes'),
   tags: text('tags'), // JSON array stored as text
+  data: jsonb('data'), // Additional customer data from integrations
   
   // Timestamps
   createdAt: timestamp('created_at').defaultNow(),
@@ -36,7 +40,7 @@ export const customers = pgTable('customers', {
 });
 
 // Customer addresses - supports multiple addresses per customer
-export const customerAddresses = pgTable('customer_addresses', {
+export const customerAddresses = customerServiceSchema.table('customer_addresses', {
   id: serial('id').primaryKey(),
   customerId: integer('customer_id').references(() => customers.id).notNull(),
   
@@ -67,7 +71,7 @@ export const customerAddresses = pgTable('customer_addresses', {
 });
 
 // Customer sync log - tracks integration sync attempts
-export const customerSyncLog = pgTable('customer_sync_log', {
+export const customerSyncLog = customerServiceSchema.table('customer_sync_log', {
   id: serial('id').primaryKey(),
   customerId: serial('customer_id').references(() => customers.id).notNull(),
   
