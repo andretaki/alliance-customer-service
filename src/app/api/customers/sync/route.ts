@@ -4,7 +4,6 @@ import { customers, customerAddresses } from '@/db';
 import { customerSyncLog } from '@/db';
 import { eq, and, ne } from 'drizzle-orm';
 import { ShopifyIntegrationService } from '@/services/integrations/ShopifyIntegrationService';
-import { QuickbooksIntegrationService } from '@/services/integrations/QuickbooksIntegrationService';
 
 interface CustomerSyncRequest {
   email: string;
@@ -28,11 +27,11 @@ export async function POST(request: NextRequest) {
   try {
     const body: CustomerSyncRequest = await request.json();
     
-    if (!body.email) {
+    if (!body.email && !body.phone) {
       return NextResponse.json(
         { 
           success: false, 
-          error: 'Email is required for customer sync' 
+          error: 'Email or phone is required for customer sync' 
         }, 
         { status: 400 }
       );
@@ -43,11 +42,10 @@ export async function POST(request: NextRequest) {
     const syncResult = {
       localCustomer: null as any,
       shopifyCustomer: null as any,
-      quickbooksCustomer: null as any,
       newlyCreated: {
         local: false,
         shopify: false,
-        quickbooks: false
+        
       },
       enrichedData: {
         name: body.name || null,
@@ -111,6 +109,14 @@ export async function POST(request: NextRequest) {
             operation: 'create',
             status: 'success',
             responseData: JSON.stringify(shopifyResult.response)
+          });
+        } else {
+          // record failure for visibility
+          syncResult.syncLogs.push({
+            service: 'shopify',
+            action: 'create',
+            success: false,
+            error: shopifyResult.error || 'Unknown Shopify create error'
           });
         }
       }
@@ -186,103 +192,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 3. Search/Create in QuickBooks
-    const quickbooksService = new QuickbooksIntegrationService();
-    try {
-      let quickbooksResult = await quickbooksService.findCustomerByEmail(body.email);
-      
-      if (!quickbooksResult.success && createIfNotFound) {
-        // Create in QuickBooks
-        quickbooksResult = await quickbooksService.createCustomer({
-          email: body.email,
-          firstName: body.name?.split(' ')[0],
-          lastName: body.name?.split(' ').slice(1).join(' '),
-          phone: body.phone,
-          company: body.company,
-          source: body.source || 'intake',
-        });
-        
-        if (quickbooksResult.success) {
-          syncResult.newlyCreated.quickbooks = true;
-          await db.insert(customerSyncLog).values({
-            customerId: syncResult.localCustomer?.id || 0,
-            service: 'quickbooks',
-            operation: 'create',
-            status: 'success',
-            responseData: JSON.stringify(quickbooksResult.response)
-          });
-        }
-      }
-      
-      if (quickbooksResult.success && quickbooksResult.response) {
-        syncResult.quickbooksCustomer = quickbooksResult.response;
-        const qbData = quickbooksResult.response;
-        
-        // Extract and merge QuickBooks data
-        if (qbData.Name && !syncResult.enrichedData.name) {
-          syncResult.enrichedData.name = qbData.Name;
-        }
-        
-        if (qbData.CompanyName && !syncResult.enrichedData.company) {
-          syncResult.enrichedData.company = qbData.CompanyName;
-        }
-        
-        if (qbData.PrimaryPhone?.FreeFormNumber && !syncResult.enrichedData.phone) {
-          syncResult.enrichedData.phone = qbData.PrimaryPhone.FreeFormNumber;
-        }
-        
-        // Add QuickBooks addresses
-        if (qbData.BillAddr) {
-          syncResult.enrichedData.addresses.push({
-            source: 'QuickBooks',
-            type: 'billing',
-            address1: qbData.BillAddr.Line1,
-            address2: qbData.BillAddr.Line2,
-            address3: qbData.BillAddr.Line3,
-            city: qbData.BillAddr.City,
-            state: qbData.BillAddr.CountrySubDivisionCode,
-            zip: qbData.BillAddr.PostalCode,
-            country: qbData.BillAddr.Country
-          });
-        }
-        
-        if (qbData.ShipAddr) {
-          syncResult.enrichedData.addresses.push({
-            source: 'QuickBooks',
-            type: 'shipping',
-            address1: qbData.ShipAddr.Line1,
-            address2: qbData.ShipAddr.Line2,
-            address3: qbData.ShipAddr.Line3,
-            city: qbData.ShipAddr.City,
-            state: qbData.ShipAddr.CountrySubDivisionCode,
-            zip: qbData.ShipAddr.PostalCode,
-            country: qbData.ShipAddr.Country
-          });
-        }
-        
-        // Add QuickBooks financial info
-        if (qbData.Balance !== undefined) {
-          syncResult.enrichedData.orderHistory.push({
-            source: 'QuickBooks',
-            outstandingBalance: qbData.Balance,
-            creditLimit: qbData.CreditLimit,
-            terms: qbData.Terms?.value
-          });
-        }
-        
-        if (qbData.Notes) {
-          syncResult.enrichedData.notes.push(`QuickBooks: ${qbData.Notes}`);
-        }
-      }
-    } catch (error) {
-      console.error('QuickBooks sync error:', error);
-      syncResult.syncLogs.push({
-        service: 'quickbooks',
-        action: 'sync',
+    // If we are expected to create the customer but couldn't in Shopify, fail the request
+    if (!syncResult.shopifyCustomer && createIfNotFound) {
+      return NextResponse.json({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+        error: 'Shopify customer not found and creation failed',
+        logs: syncResult.syncLogs
+      }, { status: 502 });
     }
+
+    // 3. QuickBooks intentionally not used
 
     // 4. Create or update local customer record
     if (!syncResult.localCustomer) {
@@ -296,7 +215,7 @@ export async function POST(request: NextRequest) {
           phone: syncResult.enrichedData.phone || body.phone || null,
           company: syncResult.enrichedData.company || body.company || null,
           shopifyId: syncResult.shopifyCustomer?.id ? BigInt(syncResult.shopifyCustomer.id) : null,
-          quickbooksId: syncResult.quickbooksCustomer?.Id || null,
+          
           source: body.source || 'intake-sync',
           notes: syncResult.enrichedData.notes.join('\n') || null,
           tags: JSON.stringify(syncResult.enrichedData.tags),
@@ -352,13 +271,13 @@ export async function POST(request: NextRequest) {
       if (syncResult.shopifyCustomer && !syncResult.localCustomer.shopifyId) {
         updates.shopifyId = syncResult.shopifyCustomer.id ? BigInt(syncResult.shopifyCustomer.id) : null;
       }
-      if (syncResult.quickbooksCustomer && !syncResult.localCustomer.quickbooksId) {
-        updates.quickbooksId = syncResult.quickbooksCustomer.Id;
-      }
+      
       
       // Update enriched fields if they were empty
-      if (!syncResult.localCustomer.name && syncResult.enrichedData.name) {
-        updates.name = syncResult.enrichedData.name;
+      if (syncResult.enrichedData.name && (!syncResult.localCustomer.firstName || !syncResult.localCustomer.lastName)) {
+        const nameParts = syncResult.enrichedData.name.split(' ');
+        updates.firstName = nameParts[0] || null;
+        updates.lastName = nameParts.slice(1).join(' ') || null;
       }
       if (!syncResult.localCustomer.company && syncResult.enrichedData.company) {
         updates.company = syncResult.enrichedData.company;
@@ -414,26 +333,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Determine failures (for logging only)
+    const hasExternalFailure = syncResult.syncLogs.some((l: any) => l?.success === false);
+
     // Return comprehensive sync result
     return NextResponse.json({
       success: true,
+      partial: undefined,
       customer: {
         id: syncResult.localCustomer.id,
         email: syncResult.localCustomer.email,
-        name: syncResult.enrichedData.name || syncResult.localCustomer.name,
+        name: syncResult.enrichedData.name || `${syncResult.localCustomer.firstName || ''} ${syncResult.localCustomer.lastName || ''}`.trim() || null,
         company: syncResult.enrichedData.company || syncResult.localCustomer.company,
         phone: syncResult.enrichedData.phone || syncResult.localCustomer.phone,
         shopifyId: syncResult.localCustomer.shopifyId?.toString() || undefined,
-        quickbooksId: syncResult.localCustomer.quickbooksId || undefined,
+        
       },
       enrichedData: syncResult.enrichedData,
       syncStatus: {
         local: syncResult.newlyCreated.local ? 'created' : 'existing',
         shopify: syncResult.shopifyCustomer 
           ? (syncResult.newlyCreated.shopify ? 'created' : 'existing')
-          : 'not_found',
-        quickbooks: syncResult.quickbooksCustomer
-          ? (syncResult.newlyCreated.quickbooks ? 'created' : 'existing')
           : 'not_found'
       },
       externalData: {
@@ -445,13 +365,9 @@ export async function POST(request: NextRequest) {
           tags: syncResult.shopifyCustomer.tags,
           createdAt: syncResult.shopifyCustomer.created_at
         } : null,
-        quickbooks: syncResult.quickbooksCustomer ? {
-          id: syncResult.quickbooksCustomer.Id,
-          name: syncResult.quickbooksCustomer.Name,
-          balance: syncResult.quickbooksCustomer.Balance,
-          terms: syncResult.quickbooksCustomer.Terms?.value
-        } : null
+        
       },
+      errors: hasExternalFailure ? syncResult.syncLogs.filter((l: any) => l?.success === false) : undefined,
       logs: syncResult.syncLogs
     });
 

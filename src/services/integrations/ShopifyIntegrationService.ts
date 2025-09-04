@@ -2,7 +2,7 @@ import axios, { AxiosResponse } from 'axios';
 import { ShopifyIntegrationResult, ShopifyCustomerData, ShopifyAddressData } from '@/types';
 
 interface ShopifyCustomerCreateData {
-  email: string;
+  email?: string;
   firstName?: string;
   lastName?: string;
   phone?: string;
@@ -49,6 +49,13 @@ export class ShopifyIntegrationService {
         };
       }
 
+      if (!data.email && !data.phone) {
+        return {
+          success: false,
+          error: 'Email or phone is required to create a Shopify customer'
+        };
+      }
+
       console.log(`[ShopifyIntegration] Creating customer: ${data.email}`);
 
       // First check if customer already exists
@@ -88,13 +95,38 @@ export class ShopifyIntegrationService {
       }
 
     } catch (error: any) {
-      console.error('[ShopifyIntegration] Error creating customer:', error);
+      console.error('[ShopifyIntegration] Error creating customer:', {
+        message: error?.message,
+        status: error?.response?.status,
+        errors: error?.response?.data?.errors || error?.response?.data,
+      });
       
       // Handle specific Shopify errors
-      if (error.response?.data?.errors) {
-        const shopifyErrors = error.response.data.errors;
-        if (shopifyErrors.email && shopifyErrors.email.includes('has already been taken')) {
-          // Customer already exists, try to find them
+      if (error.response?.data) {
+        const resp = error.response.data;
+        const shopifyErrors = resp.errors ?? resp;
+
+        // Normalize to string messages for inspection
+        const flattenErrors = (errs: any): string => {
+          try {
+            if (!errs) return '';
+            if (typeof errs === 'string') return errs;
+            if (Array.isArray(errs)) return errs.join(', ');
+            if (typeof errs === 'object') {
+              return Object.entries(errs)
+                .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+                .join(', ');
+            }
+            return String(errs);
+          } catch {
+            return String(errs);
+          }
+        };
+
+        const errorText = flattenErrors(shopifyErrors);
+
+        // Treat duplicate email as success by looking up the existing customer
+        if (/(email).*already been taken/i.test(errorText)) {
           const existingCustomer = await this.findCustomerByEmail(data.email);
           if (existingCustomer.success) {
             return {
@@ -108,7 +140,7 @@ export class ShopifyIntegrationService {
         
         return {
           success: false,
-          error: `Shopify error: ${Object.entries(shopifyErrors).map(([k, v]) => `${k}: ${v}`).join(', ')}`
+          error: `Shopify error: ${errorText || 'Unprocessable entity'}`
         };
       }
 
@@ -416,16 +448,26 @@ export class ShopifyIntegrationService {
       note += ` Company: ${data.company}.`;
     }
 
-    return {
-      email: data.email!,
-      first_name: data.firstName,
-      last_name: data.lastName,
-      phone: data.phone,
+    // Helper to avoid sending empty strings which can trigger 422s
+    const clean = (v?: string) => {
+      if (typeof v !== 'string') return v;
+      const t = v.trim();
+      return t.length > 0 ? t : undefined;
+    };
+
+    const payload: ShopifyCustomerData = {
+      first_name: clean(data.firstName),
+      last_name: clean(data.lastName),
+      phone: clean(data.phone),
       tags: tags.join(', '),
       note: note.trim(),
       verified_email: false,
       accepts_marketing: false
     };
+    if (clean(data.email)) {
+      payload.email = clean(data.email);
+    }
+    return payload;
   }
 
   /**
@@ -437,7 +479,7 @@ export class ShopifyIntegrationService {
     data?: any,
     params?: Record<string, any>
   ): Promise<AxiosResponse> {
-    const url = `https://${this.storeUrl}/admin/api/${this.apiVersion}${endpoint}`;
+    const url = `${this.storeUrl}/admin/api/${this.apiVersion}${endpoint}`;
     
     const config = {
       method,
@@ -450,7 +492,30 @@ export class ShopifyIntegrationService {
       params
     };
 
-    return await axios(config);
+    try {
+      return await axios(config);
+    } catch (error: any) {
+      // Add enriched logging to help diagnose 4xx/5xx issues
+      const status = error?.response?.status;
+      const respData = error?.response?.data;
+      const errors = respData?.errors;
+      const requestId = error?.response?.headers?.['x-request-id'] || error?.response?.headers?.['x-request-id'.toLowerCase()];
+      // Avoid dumping full PII; include presence/shape only
+      const payloadSummary = {
+        hasData: Boolean(data),
+        customerKeys: data?.customer ? Object.keys(data.customer) : undefined,
+      };
+      console.error('[ShopifyIntegration] API error', {
+        method,
+        url,
+        status,
+        errors,
+        message: error?.message,
+        requestId,
+        payloadSummary
+      });
+      throw error;
+    }
   }
 
   /**

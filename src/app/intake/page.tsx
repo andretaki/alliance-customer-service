@@ -7,10 +7,16 @@ import { z } from 'zod';
 const ticketSchema = z.object({
   requestType: z.enum(['quote', 'coa', 'freight', 'claim', 'other']),
   customerName: z.string().optional(),
-  customerEmail: z.string().email('Valid email required'),
-  customerPhone: z.string().min(10, 'Valid phone number required'),
+  customerEmail: z.string().optional().refine((val) => !val || z.string().email().safeParse(val).success, 'Valid email required'),
+  customerPhone: z.string().optional().refine((val) => !val || val.replace(/\D/g, '').length >= 10, 'Valid phone number required'),
   summary: z.string().min(10, 'Please provide a brief description'),
-});
+}).refine(
+  (data) => data.customerEmail || data.customerPhone,
+  {
+    message: "Either email or phone number is required",
+    path: ["customerEmail"]
+  }
+);
 
 const customerSchema = z.object({
   customerEmail: z.string().optional().refine((val) => !val || z.string().email().safeParse(val).success, 'Valid email required'),
@@ -78,8 +84,8 @@ export default function IntakePage() {
         .filter(Boolean);
 
       pending.forEach((item) => {
-        if (item && item.data.email) {
-          syncCustomerData(item.data.email);
+        if (item && (item.data.email || item.data.phone)) {
+          syncCustomerData(item.data.email, item.data.phone);
           localStorage.removeItem(item.key);
         }
       });
@@ -118,7 +124,7 @@ export default function IntakePage() {
     }
   };
   
-  // Sync customer data from Shopify and QuickBooks
+  // Sync customer data from Shopify
   const syncCustomerData = async (email?: string, phone?: string) => {
     if (!email && !phone) return;
     
@@ -151,13 +157,16 @@ export default function IntakePage() {
       }
     } catch (error) {
       console.error('Customer sync error:', error);
-      // Save to localStorage for retry when online
-      localStorage.setItem(`pending_customer_${email}`, JSON.stringify({
-        email,
-        name: formData.customerName,
-        phone: formData.customerPhone,
-        timestamp: Date.now()
-      }));
+            // Save to localStorage for retry when online
+            {
+              const keyId = email || phone || 'unknown';
+              localStorage.setItem(`pending_customer_${keyId}`, JSON.stringify({
+                email,
+                phone,
+                name: formData.customerName,
+                timestamp: Date.now()
+              }));
+            }
     } finally {
       setCustomerSyncing(false);
     }
@@ -196,8 +205,8 @@ export default function IntakePage() {
     try {
       const validatedData = ticketSchema.parse(formData);
       
-      // First ensure customer exists in all systems
-      if (validatedData.customerEmail) {
+      // Ensure customer exists in Shopify/local
+      if (validatedData.customerEmail || validatedData.customerPhone) {
         const syncResponse = await fetch('/api/customers/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -205,7 +214,7 @@ export default function IntakePage() {
             email: validatedData.customerEmail,
             name: validatedData.customerName,
             phone: validatedData.customerPhone,
-            createIfNotFound: true // Create in both systems if not found
+            createIfNotFound: true // Create in Shopify if not found
           })
         });
         
@@ -496,16 +505,7 @@ export default function IntakePage() {
                       </div>
                     )}
                     
-                    {/* QuickBooks Data */}
-                    {customerData.externalData?.quickbooks && (
-                      <div style={{ padding: '8px', backgroundColor: '#ecfdf5', borderRadius: '4px' }}>
-                        <div style={{ fontWeight: '600', marginBottom: '4px' }}>💰 QuickBooks</div>
-                        <div>Balance: ${customerData.externalData.quickbooks.balance || 0}</div>
-                        {customerData.externalData.quickbooks.terms && (
-                          <div>Terms: {customerData.externalData.quickbooks.terms}</div>
-                        )}
-                      </div>
-                    )}
+                    
                     
                     {/* Company Info */}
                     {customerData.enrichedData?.company && (
@@ -608,11 +608,6 @@ export default function IntakePage() {
                       ${customerData.externalData?.shopify?.totalSpent || 0} spent
                     </div>
                   )}
-                  {customerData.syncStatus?.quickbooks === 'existing' && (
-                    <div>
-                      <strong>QuickBooks:</strong> Balance ${customerData.externalData?.quickbooks?.balance || 0}
-                    </div>
-                  )}
                   {customerData.enrichedData?.company && (
                     <div><strong>Company:</strong> {customerData.enrichedData.company}</div>
                   )}
@@ -634,10 +629,13 @@ export default function IntakePage() {
             )}
             {!hasCustomer && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ marginBottom: '4px', fontSize: '12px', color: '#6b7280' }}>
+                  Enter email or phone to look up. Email is required to create a new customer.
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
-                      Email <span style={{ fontSize: '12px', color: '#6b7280' }}>(or phone)</span>
+                      Email
                     </label>
                     <input
                       type="email"
@@ -661,7 +659,7 @@ export default function IntakePage() {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
-                      Phone <span style={{ fontSize: '12px', color: '#6b7280' }}>(or email)</span>
+                      Phone
                     </label>
                     <input
                       type="tel"

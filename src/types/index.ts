@@ -89,7 +89,7 @@ export interface QuickbooksIntegrationResult {
 
 // External service customer formats
 export interface ShopifyCustomerData {
-  email: string;
+  email?: string;
   first_name?: string;
   last_name?: string;
   phone?: string;
